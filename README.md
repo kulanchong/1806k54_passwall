@@ -1,32 +1,36 @@
-# ImmortalWrt 18.06-k5.4 PassWall 自动编译
+# ImmortalWrt 18.06-k5.4 PassWall SDK 自动编译
 
-这个仓库提供一套 GitHub Actions 工作流，用来基于 `immortalwrt/immortalwrt` 的 `openwrt-18.06-k5.4` 分支自动编译 `PassWall` 插件包。
+这个仓库提供一套 GitHub Actions 工作流，用来基于 ImmortalWrt SDK 自动编译 `PassWall` 插件包。
 
-当前工作流固定筛选的包架构是：
+当前默认 SDK：
 
 ```text
+https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+```
+
+目标平台和包架构：
+
+```text
+sunxi/cortexa53
 aarch64_cortex-a53
 ```
 
 ## 已做好的内容
 
-- 自动拉取 `immortalwrt/immortalwrt` 的 `openwrt-18.06-k5.4`
+- 自动下载并解压 `sunxi/cortexa53` SDK
 - 自动添加 `Openwrt-Passwall/openwrt-passwall` 和 `openwrt-passwall-packages` feed
 - 自动执行 `feeds update/install`
-- 自动编译 `luci-app-passwall`
-- 自动筛选并上传 `aarch64_cortex-a53` 架构的 `ipk`/`apk` 构件
+- 自动编译选中的 PassWall 软件包
+- 自动上传 SDK 产出的 `ipk` 构件
 
-## 你还需要改的地方
+## 配置
 
-编辑 `build/passwall.env`，至少填写这两个参数：
+默认配置在 `build/passwall.env`：
 
 ```bash
-TARGET_BOARD_DEFAULT=你的 target
-TARGET_SUBTARGET_DEFAULT=你的 subtarget
+SDK_URL="https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
+PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core"
 ```
-
-注意：`aarch64_cortex-a53` 只是软件包架构，不等于 OpenWrt 的 `target/subtarget`。  
-如果只知道 CPU 架构，但不知道设备对应的平台，工作流会直接报错，这是为了避免给你编出错误平台的包。
 
 ## 默认编译的包
 
@@ -53,13 +57,11 @@ PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core sing-box
 
 ### 方式 2：手动运行
 
-进入 GitHub 仓库的 `Actions` 页面，选择 `Build PassWall for ImmortalWrt 18.06-k5.4`，然后点击 `Run workflow`。
+进入 GitHub 仓库的 `Actions` 页面，选择 `Build PassWall with ImmortalWrt SDK`，然后点击 `Run workflow`。
 
 你也可以在手动运行时直接填写：
 
-- `target_board`
-- `target_subtarget`
-- `target_profile`
+- `sdk_url`
 - `passwall_packages`
 
 手动输入的值会覆盖 `build/passwall.env` 里的默认值。
@@ -69,9 +71,5 @@ PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core sing-box
 编译完成后，到 Actions 的 Artifacts 下载：
 
 ```text
-passwall-<target_board>-<target_subtarget>-aarch64_cortex-a53
+passwall-sdk-sunxi-cortexa53-aarch64_cortex-a53
 ```
-
-## 建议
-
-如果你告诉我你的具体设备型号，或者直接告诉我它对应的 `TARGET_BOARD` / `TARGET_SUBTARGET`，我可以继续帮你把 `build/passwall.env` 直接填好，做到开箱即用。

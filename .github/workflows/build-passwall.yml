@@ -1,20 +1,12 @@
-name: Build PassWall for ImmortalWrt 18.06-k5.4
+name: Build PassWall with ImmortalWrt SDK
 
 on:
   workflow_dispatch:
     inputs:
-      target_board:
-        description: "OpenWrt target board, for example bcm27xx"
+      sdk_url:
+        description: "ImmortalWrt SDK tar.xz URL"
         required: false
-        default: ""
-      target_subtarget:
-        description: "OpenWrt target subtarget, for example bcm2710"
-        required: false
-        default: ""
-      target_profile:
-        description: "Optional device profile, for example DEVICE_RaspberryPi_3B"
-        required: false
-        default: ""
+        default: "https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
       passwall_packages:
         description: "Space-separated package list"
         required: false
@@ -28,11 +20,12 @@ on:
       - "build/passwall.env"
 
 env:
-  SOURCE_REPO: https://github.com/immortalwrt/immortalwrt.git
-  SOURCE_BRANCH: openwrt-18.06-k5.4
+  DEFAULT_SDK_URL: https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz
   PASSWALL_PACKAGES_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git
   PASSWALL_LUCI_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall.git
   PASSWALL_FEED_BRANCH: main
+  TARGET_BOARD: sunxi
+  TARGET_SUBTARGET: cortexa53
   ARCH_PACKAGES: aarch64_cortex-a53
   TZ: Asia/Shanghai
 
@@ -77,86 +70,78 @@ jobs:
             set +a
           fi
 
-          TARGET_BOARD="${{ github.event.inputs.target_board || '' }}"
-          TARGET_SUBTARGET="${{ github.event.inputs.target_subtarget || '' }}"
-          TARGET_PROFILE="${{ github.event.inputs.target_profile || '' }}"
+          SDK_URL_INPUT="${{ github.event.inputs.sdk_url || '' }}"
           PASSWALL_PACKAGES_INPUT="${{ github.event.inputs.passwall_packages || '' }}"
 
-          TARGET_BOARD="${TARGET_BOARD:-${TARGET_BOARD_DEFAULT:-}}"
-          TARGET_SUBTARGET="${TARGET_SUBTARGET:-${TARGET_SUBTARGET_DEFAULT:-}}"
-          TARGET_PROFILE="${TARGET_PROFILE:-${TARGET_PROFILE_DEFAULT:-}}"
+          SDK_URL_INPUT="${SDK_URL_INPUT:-${SDK_URL:-${DEFAULT_SDK_URL}}}"
           PASSWALL_PACKAGES_INPUT="${PASSWALL_PACKAGES_INPUT:-${PASSWALL_PACKAGES:-luci-app-passwall luci-i18n-passwall-zh-cn xray-core}}"
 
-          if [[ -z "${TARGET_BOARD}" || -z "${TARGET_SUBTARGET}" ]]; then
-            echo "::error::TARGET_BOARD/TARGET_SUBTARGET 不能为空。aarch64_cortex-a53 只是软件包架构，不能唯一确定 OpenWrt 目标平台。请在 build/passwall.env 中填写，或手动运行 workflow_dispatch 时传入。"
+          if [[ -z "${SDK_URL_INPUT}" ]]; then
+            echo "::error::SDK_URL 不能为空。"
             exit 1
           fi
 
-          echo "target_board=${TARGET_BOARD}" >> "${GITHUB_OUTPUT}"
-          echo "target_subtarget=${TARGET_SUBTARGET}" >> "${GITHUB_OUTPUT}"
-          echo "target_profile=${TARGET_PROFILE}" >> "${GITHUB_OUTPUT}"
+          echo "sdk_url=${SDK_URL_INPUT}" >> "${GITHUB_OUTPUT}"
           echo "passwall_packages=${PASSWALL_PACKAGES_INPUT}" >> "${GITHUB_OUTPUT}"
 
-      - name: Clone ImmortalWrt source
+      - name: Download and extract SDK
+        id: sdk
+        shell: bash
         run: |
-          git clone --depth 1 --branch "${SOURCE_BRANCH}" "${SOURCE_REPO}" immortalwrt
+          set -euo pipefail
+          sdk_archive="immortalwrt-sdk.tar.xz"
+          for attempt in 1 2 3; do
+            echo "SDK download attempt ${attempt}/3"
+            if curl -fL --connect-timeout 30 --retry 5 --retry-delay 5 -o "${sdk_archive}" "${{ steps.cfg.outputs.sdk_url }}"; then
+              break
+            fi
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "::error::SDK 下载失败：${{ steps.cfg.outputs.sdk_url }}"
+              exit 1
+            fi
+            sleep 15
+          done
 
-      - name: Patch legacy source mirrors
-        working-directory: immortalwrt
-        run: |
-          perl -0pi -e 's#http://grail\.cba\.csuohio\.edu/~somos/#https://sources.cdn.openwrt.org/#g' tools/xxd/Makefile
+          tar -xJf "${sdk_archive}"
+          sdk_dir="$(find . -maxdepth 1 -type d \( -name 'immortalwrt-sdk-*' -o -name 'openwrt-sdk-*' \) | sort | head -n 1)"
+          if [[ -z "${sdk_dir}" ]]; then
+            echo "::error::SDK 解压后没有找到 immortalwrt-sdk-* 或 openwrt-sdk-* 目录。"
+            exit 1
+          fi
+          sdk_dir="${sdk_dir#./}"
+          echo "sdk_dir=${sdk_dir}" >> "${GITHUB_OUTPUT}"
 
       - name: Cache download directory
         uses: actions/cache@v4
         with:
-          path: immortalwrt/dl
-          key: ${{ runner.os }}-immortalwrt-dl-${{ env.SOURCE_BRANCH }}
+          path: ${{ steps.sdk.outputs.sdk_dir }}/dl
+          key: ${{ runner.os }}-immortalwrt-sdk-dl-${{ env.TARGET_BOARD }}-${{ env.TARGET_SUBTARGET }}
           restore-keys: |
-            ${{ runner.os }}-immortalwrt-dl-
+            ${{ runner.os }}-immortalwrt-sdk-dl-
 
       - name: Add PassWall feeds
-        working-directory: immortalwrt
+        working-directory: ${{ steps.sdk.outputs.sdk_dir }}
         run: |
+          touch feeds.conf.default
           perl -0pi -e 's#\A#src-git passwall_packages '"${PASSWALL_PACKAGES_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\nsrc-git passwall_luci '"${PASSWALL_LUCI_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\n#' feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Patch package source mirrors
-        working-directory: immortalwrt
+        working-directory: ${{ steps.sdk.outputs.sdk_dir }}
         run: |
           if [[ -f feeds/packages/net/curl/Makefile ]]; then
             perl -0pi -e 's#PKG_SOURCE_URL:=https://dl\.uxnr\.de/mirror/curl/ \\\n https://curl\.askapache\.com/download/ \\\n https://curl\.se/download/#PKG_SOURCE_URL:=https://sources.cdn.openwrt.org/ \\\n https://curl.se/download/#g' feeds/packages/net/curl/Makefile
           fi
 
       - name: Generate .config
-        working-directory: immortalwrt
+        working-directory: ${{ steps.sdk.outputs.sdk_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          TARGET_BOARD='${{ steps.cfg.outputs.target_board }}'
-          TARGET_SUBTARGET='${{ steps.cfg.outputs.target_subtarget }}'
-          TARGET_PROFILE='${{ steps.cfg.outputs.target_profile }}'
           PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
 
-          for value_name in TARGET_BOARD TARGET_SUBTARGET; do
-            value="${!value_name}"
-            if [[ ! "${value}" =~ ^[A-Za-z0-9_]+$ ]]; then
-              echo "::error::${value_name}=${value} 含有非法字符。这里只能填写 OpenWrt 配置符号，例如 bcm27xx、bcm2710、cortexa53，不能写带空格、斜杠或其它分隔符的值。"
-              exit 1
-            fi
-          done
-
-          if [[ -n "${TARGET_PROFILE}" && ! "${TARGET_PROFILE}" =~ ^[A-Za-z0-9_]+$ ]]; then
-            echo "::error::TARGET_PROFILE=${TARGET_PROFILE} 含有非法字符。请填写 OpenWrt 的配置符号名，而不是显示名称。"
-            exit 1
-          fi
-
           {
-            printf 'CONFIG_TARGET_%s=y\n' "${TARGET_BOARD}"
-            printf 'CONFIG_TARGET_%s_%s=y\n' "${TARGET_BOARD}" "${TARGET_SUBTARGET}"
-            if [[ -n "${TARGET_PROFILE}" ]]; then
-              printf 'CONFIG_TARGET_%s_%s_%s=y\n' "${TARGET_BOARD}" "${TARGET_SUBTARGET}" "${TARGET_PROFILE}"
-            fi
             printf 'CONFIG_ALL_KMODS=n\n'
             printf 'CONFIG_ALL_NONSHARED=n\n'
             printf 'CONFIG_DEVEL=n\n'
@@ -177,7 +162,7 @@ jobs:
           make defconfig
 
       - name: Download sources
-        working-directory: immortalwrt
+        working-directory: ${{ steps.sdk.outputs.sdk_dir }}
         shell: bash
         run: |
           set -euo pipefail
@@ -194,25 +179,8 @@ jobs:
           echo "::error::下载源码连续 3 次失败，请检查上面的 URL 或稍后重试。"
           exit 1
 
-      - name: Prepare host tools
-        working-directory: immortalwrt
-        shell: bash
-        run: |
-          set -euo pipefail
-          make tools/install -j"$(nproc)" V=s || make tools/install -j1 V=sc
-
-          mkdir -p staging_dir/host/bin
-          if [[ ! -x staging_dir/host/bin/ninja && -x /usr/bin/ninja ]]; then
-            ln -sf /usr/bin/ninja staging_dir/host/bin/ninja
-          fi
-
-          if [[ ! -x staging_dir/host/bin/ninja ]]; then
-            echo "::error::OpenWrt host ninja is missing and /usr/bin/ninja is not available."
-            exit 1
-          fi
-
       - name: Build PassWall packages
-        working-directory: immortalwrt
+        working-directory: ${{ steps.sdk.outputs.sdk_dir }}
         shell: bash
         run: |
           set -euo pipefail
@@ -220,7 +188,7 @@ jobs:
 
           built_any=0
           for pkg in ${PASSWALL_PACKAGES}; do
-            mapfile -t makefiles < <(find package -path "*/${pkg}/Makefile" -type f | sort)
+            mapfile -t makefiles < <(find -L package -path "*/${pkg}/Makefile" -type f | sort)
 
             if [[ "${#makefiles[@]}" -eq 0 ]]; then
               echo "::warning::没有找到 ${pkg} 的独立 Makefile，可能是由其它 LuCI 包生成的翻译包，跳过直接编译。"
@@ -250,38 +218,27 @@ jobs:
           mkdir -p upload
           shopt -s nullglob
 
-          mapfile -t files < <(find immortalwrt/bin/packages -type f \( -name "*.ipk" -o -name "*.apk" \) | sort)
+          mapfile -t files < <(find "${{ steps.sdk.outputs.sdk_dir }}/bin/packages" -type f \( -name "*.ipk" -o -name "Packages*" \) | sort)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "::error::没有找到任何已编译的软件包，请检查前面的日志。"
             exit 1
           fi
 
-          packages="${{ steps.cfg.outputs.passwall_packages }}"
           for file in "${files[@]}"; do
-            name="$(basename "${file}")"
-            if [[ "${name}" == "Packages"* ]]; then
-              cp "${file}" upload/
-              continue
-            fi
-
-            for pkg in ${packages}; do
-              if [[ "${name}" == "${pkg}"_* && ( "${name}" == *"_${ARCH_PACKAGES}.ipk" || "${name}" == *"_${ARCH_PACKAGES}.apk" || "${name}" == *"_all.ipk" || "${name}" == *"_all.apk" ) ]]; then
-                cp "${file}" upload/
-                break
-              fi
-            done
+            cp "${file}" upload/
           done
 
-          if ! compgen -G "upload/*.ipk" > /dev/null && ! compgen -G "upload/*.apk" > /dev/null; then
-            echo "::error::没有收集到选中的 PassWall 软件包。请确认 TARGET_BOARD/TARGET_SUBTARGET 与 ${ARCH_PACKAGES} 匹配，且所选包在该分支上可编译。"
+          if ! compgen -G "upload/*.ipk" > /dev/null; then
+            echo "::error::没有收集到任何 ipk 软件包。"
             exit 1
           fi
 
           printf '%s\n' "${{ steps.cfg.outputs.passwall_packages }}" > upload/selected-packages.txt
+          printf '%s\n' "${{ steps.cfg.outputs.sdk_url }}" > upload/sdk-url.txt
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: passwall-${{ steps.cfg.outputs.target_board }}-${{ steps.cfg.outputs.target_subtarget }}-${{ env.ARCH_PACKAGES }}
+          name: passwall-sdk-${{ env.TARGET_BOARD }}-${{ env.TARGET_SUBTARGET }}-${{ env.ARCH_PACKAGES }}
           path: upload/
           if-no-files-found: error
