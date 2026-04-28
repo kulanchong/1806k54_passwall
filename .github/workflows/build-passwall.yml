@@ -254,7 +254,52 @@ jobs:
             find staging_dir -maxdepth 5 -type f -name 'lua.h' -print
           }
 
+          stage_libnl_tiny() {
+            local target_staging
+            local toolchain_bin
+            local cc
+            target_staging="$(find staging_dir -maxdepth 1 -type d -name 'target-*' | sort | head -n 1)"
+            toolchain_bin="$(find staging_dir -maxdepth 3 -type d -path '*/bin' | grep '/toolchain-' | sort | head -n 1)"
+
+            if [[ -z "${target_staging}" || -z "${toolchain_bin}" ]]; then
+              echo "::error::没有找到 target staging 或 toolchain bin 目录。"
+              exit 1
+            fi
+
+            if find "${target_staging}" -path '*/usr/include/libnl-tiny/netlink/msg.h' -type f | grep -q . \
+              && find "${target_staging}" -path '*/usr/lib/libnl-tiny.so*' -type f | grep -q .; then
+              return 0
+            fi
+
+            cc="$(find "${toolchain_bin}" -maxdepth 1 -type f -name '*-gcc' | sort | head -n 1)"
+            if [[ -z "${cc}" ]]; then
+              echo "::error::没有找到 SDK 交叉编译 gcc。"
+              exit 1
+            fi
+
+            echo "Staging libnl-tiny for SDK LuCI builds"
+            rm -rf libnl-tiny-src libnl-tiny-build libnl-tiny-dest
+            git clone https://github.com/openwrt/libnl-tiny.git libnl-tiny-src
+            git -C libnl-tiny-src checkout c291088f631d1694f7ba0444b59677b194348da8
+
+            cmake -S libnl-tiny-src -B libnl-tiny-build \
+              -DCMAKE_C_COMPILER="${cc}" \
+              -DCMAKE_INSTALL_PREFIX=/usr \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_INSTALL_INCLUDEDIR=include
+            cmake --build libnl-tiny-build --parallel "$(nproc)"
+            DESTDIR="$(pwd)/libnl-tiny-dest" cmake --install libnl-tiny-build
+
+            mkdir -p "${target_staging}/usr/include/libnl-tiny" "${target_staging}/usr/lib"
+            cp -fpR libnl-tiny-dest/usr/include/libnl-tiny/* "${target_staging}/usr/include/libnl-tiny/"
+            cp -fpP libnl-tiny-dest/usr/lib/libnl-tiny.so* "${target_staging}/usr/lib/"
+
+            find "${target_staging}/usr/include/libnl-tiny" -type f -name 'msg.h' -print
+            find "${target_staging}/usr/lib" -maxdepth 1 -type f -name 'libnl-tiny.so*' -print
+          }
+
           stage_lua_headers
+          stage_libnl_tiny
 
           # SDK builds need development headers staged before LuCI C modules build.
           for target in \
