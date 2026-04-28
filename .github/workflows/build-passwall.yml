@@ -113,23 +113,47 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          {
-            echo "CONFIG_TARGET_${{ steps.cfg.outputs.target_board }}=y"
-            echo "CONFIG_TARGET_${{ steps.cfg.outputs.target_board }}_${{ steps.cfg.outputs.target_subtarget }}=y"
-            if [[ -n "${{ steps.cfg.outputs.target_profile }}" ]]; then
-              echo "CONFIG_TARGET_${{ steps.cfg.outputs.target_board }}_${{ steps.cfg.outputs.target_subtarget }}_${{ steps.cfg.outputs.target_profile }}=y"
-            fi
-            echo "CONFIG_ALL_KMODS=n"
-            echo "CONFIG_ALL_NONSHARED=n"
-            echo "CONFIG_DEVEL=n"
-            echo "CONFIG_AUTOREMOVE=y"
-            echo "CONFIG_PACKAGE_luci-compat=y"
-          } > .config
+          TARGET_BOARD='${{ steps.cfg.outputs.target_board }}'
+          TARGET_SUBTARGET='${{ steps.cfg.outputs.target_subtarget }}'
+          TARGET_PROFILE='${{ steps.cfg.outputs.target_profile }}'
+          PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
 
-          for pkg in ${{ steps.cfg.outputs.passwall_packages }}; do
-            echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+          for value_name in TARGET_BOARD TARGET_SUBTARGET; do
+            value="${!value_name}"
+            if [[ ! "${value}" =~ ^[A-Za-z0-9_]+$ ]]; then
+              echo "::error::${value_name}=${value} 含有非法字符。这里只能填写 OpenWrt 配置符号，例如 bcm27xx、bcm2710、cortexa53，不能写带空格、斜杠或其它分隔符的值。"
+              exit 1
+            fi
           done
 
+          if [[ -n "${TARGET_PROFILE}" && ! "${TARGET_PROFILE}" =~ ^[A-Za-z0-9_]+$ ]]; then
+            echo "::error::TARGET_PROFILE=${TARGET_PROFILE} 含有非法字符。请填写 OpenWrt 的配置符号名，而不是显示名称。"
+            exit 1
+          fi
+
+          {
+            printf 'CONFIG_TARGET_%s=y\n' "${TARGET_BOARD}"
+            printf 'CONFIG_TARGET_%s_%s=y\n' "${TARGET_BOARD}" "${TARGET_SUBTARGET}"
+            if [[ -n "${TARGET_PROFILE}" ]]; then
+              printf 'CONFIG_TARGET_%s_%s_%s=y\n' "${TARGET_BOARD}" "${TARGET_SUBTARGET}" "${TARGET_PROFILE}"
+            fi
+            printf 'CONFIG_ALL_KMODS=n\n'
+            printf 'CONFIG_ALL_NONSHARED=n\n'
+            printf 'CONFIG_DEVEL=n\n'
+            printf 'CONFIG_AUTOREMOVE=y\n'
+            printf 'CONFIG_PACKAGE_luci-compat=y\n'
+          } > .config
+
+          for pkg in ${PASSWALL_PACKAGES}; do
+            if [[ ! "${pkg}" =~ ^[A-Za-z0-9_+-]+$ ]]; then
+              echo "::error::软件包名 ${pkg} 含有非法字符。"
+              exit 1
+            fi
+            printf 'CONFIG_PACKAGE_%s=y\n' "${pkg}" >> .config
+          done
+
+          echo "Generated .config preview:"
+          sed -n '1,20p' .config
           make defconfig
 
       - name: Download sources
