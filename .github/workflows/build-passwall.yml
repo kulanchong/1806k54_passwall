@@ -101,6 +101,11 @@ jobs:
         run: |
           git clone --depth 1 --branch "${SOURCE_BRANCH}" "${SOURCE_REPO}" immortalwrt
 
+      - name: Patch legacy source mirrors
+        working-directory: immortalwrt
+        run: |
+          perl -0pi -e 's#http://grail\.cba\.csuohio\.edu/~somos/#https://sources.cdn.openwrt.org/#g' tools/xxd/Makefile
+
       - name: Cache download directory
         uses: actions/cache@v4
         with:
