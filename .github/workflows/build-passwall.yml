@@ -209,6 +209,29 @@ jobs:
           set -euo pipefail
           PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
 
+          build_target() {
+            local target="$1"
+            echo "Building ${target}"
+            if ! make "${target}" -j"$(nproc)" V=s; then
+              echo "::warning::${target} 并行编译失败，改用串行详细日志重试。"
+              make "${target}" -j1 V=sc
+            fi
+          }
+
+          # SDK builds need development headers staged before LuCI C modules build.
+          for target in \
+            package/feeds/packages/lua/compile \
+            package/feeds/luci/luci-lib-ip/compile \
+            package/feeds/luci/luci-lib-jsonc/compile \
+            package/feeds/luci/luci-compat/compile
+          do
+            if [[ -f "${target%/compile}/Makefile" ]]; then
+              build_target "${target}"
+            else
+              echo "::warning::跳过 ${target}，没有找到对应 Makefile。"
+            fi
+          done
+
           built_any=0
           for pkg in ${PASSWALL_PACKAGES}; do
             mapfile -t makefiles < <(find -L package -path "*/${pkg}/Makefile" -type f | sort)
@@ -220,11 +243,7 @@ jobs:
 
             for makefile in "${makefiles[@]}"; do
               target="${makefile%/Makefile}/compile"
-              echo "Building ${pkg} via ${target}"
-              if ! make "${target}" -j"$(nproc)" V=s; then
-                echo "::warning::${target} 并行编译失败，改用串行详细日志重试。"
-                make "${target}" -j1 V=sc
-              fi
+              build_target "${target}"
               built_any=1
             done
           done
