@@ -124,8 +124,9 @@ jobs:
         run: |
           touch feeds.conf.default
           perl -0pi -e 's#\A#src-git passwall_packages '"${PASSWALL_PACKAGES_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\nsrc-git passwall_luci '"${PASSWALL_LUCI_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\n#' feeds.conf.default
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds update passwall_packages passwall_luci
+          ./scripts/feeds install -a -p passwall_packages
+          ./scripts/feeds install -a -p passwall_luci
 
       - name: Patch package source mirrors
         working-directory: ${{ steps.sdk.outputs.sdk_dir }}
@@ -160,24 +161,6 @@ jobs:
           echo "Generated .config preview:"
           sed -n '1,20p' .config
           make defconfig
-
-      - name: Download sources
-        working-directory: ${{ steps.sdk.outputs.sdk_dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            echo "Download attempt ${attempt}/3"
-            if make download -j1 V=s; then
-              exit 0
-            fi
-            if [[ "${attempt}" -lt 3 ]]; then
-              echo "Download failed, waiting 15 seconds before retry..."
-              sleep 15
-            fi
-          done
-          echo "::error::下载源码连续 3 次失败，请检查上面的 URL 或稍后重试。"
-          exit 1
 
       - name: Build PassWall packages
         working-directory: ${{ steps.sdk.outputs.sdk_dir }}
