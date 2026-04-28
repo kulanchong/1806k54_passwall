@@ -187,6 +187,23 @@ jobs:
           echo "::error::下载源码连续 3 次失败，请检查上面的 URL 或稍后重试。"
           exit 1
 
+      - name: Prepare host tools
+        working-directory: immortalwrt
+        shell: bash
+        run: |
+          set -euo pipefail
+          make tools/install -j"$(nproc)" V=s || make tools/install -j1 V=sc
+
+          mkdir -p staging_dir/host/bin
+          if [[ ! -x staging_dir/host/bin/ninja && -x /usr/bin/ninja ]]; then
+            ln -sf /usr/bin/ninja staging_dir/host/bin/ninja
+          fi
+
+          if [[ ! -x staging_dir/host/bin/ninja ]]; then
+            echo "::error::OpenWrt host ninja is missing and /usr/bin/ninja is not available."
+            exit 1
+          fi
+
       - name: Build PassWall packages
         working-directory: immortalwrt
         run: |
