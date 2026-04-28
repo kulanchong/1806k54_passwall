@@ -222,23 +222,34 @@ jobs:
           stage_lua_headers() {
             local target_staging
             local toolchain_staging
+            local cc
             target_staging="$(find staging_dir -maxdepth 1 -type d -name 'target-*' | sort | head -n 1)"
             toolchain_staging="$(find staging_dir -maxdepth 1 -type d -name 'toolchain-*' | sort | head -n 1)"
 
-            if [[ -z "${target_staging}" ]]; then
-              echo "::error::没有找到 target staging 目录。"
+            if [[ -z "${target_staging}" || -z "${toolchain_staging}" ]]; then
+              echo "::error::没有找到 target staging 或 toolchain staging 目录。"
               exit 1
             fi
 
-            if find "${target_staging}" -path '*/usr/include/lua.h' -type f | grep -q .; then
+            if find "${target_staging}" -path '*/usr/include/lua.h' -type f | grep -q . \
+              && find "${target_staging}" -path '*/usr/lib/liblua.so*' -type f | grep -q .; then
               return 0
             fi
 
-            echo "Staging Lua 5.1 headers for SDK LuCI builds"
-            mkdir -p "${target_staging}/usr/include"
-            if [[ -n "${toolchain_staging}" ]]; then
-              mkdir -p "${toolchain_staging}/usr/include"
+            cc="$(find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*-gcc' | sort | head -n 1)"
+            if [[ -z "${cc}" ]]; then
+              cc="$(find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*-gcc-*' | sort | head -n 1)"
             fi
+            if [[ -z "${cc}" ]]; then
+              echo "::error::没有找到 SDK 交叉编译 gcc，无法构建 liblua。"
+              find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*gcc*' -print || true
+              exit 1
+            fi
+            cc="$(readlink -f "${cc}")"
+
+            echo "Staging Lua 5.1 headers and liblua for SDK LuCI builds"
+            mkdir -p "${target_staging}/usr/include" "${target_staging}/usr/lib"
+            mkdir -p "${toolchain_staging}/usr/include" "${toolchain_staging}/usr/lib"
 
             curl -fL --retry 5 --connect-timeout 30 -o lua-5.1.5.tar.gz \
               https://sources.cdn.openwrt.org/lua-5.1.5.tar.gz
@@ -246,12 +257,33 @@ jobs:
 
             for header in lua.h luaconf.h lauxlib.h lualib.h; do
               cp "lua-5.1.5/src/${header}" "${target_staging}/usr/include/"
-              if [[ -n "${toolchain_staging}" ]]; then
-                cp "lua-5.1.5/src/${header}" "${toolchain_staging}/usr/include/"
-              fi
+              cp "lua-5.1.5/src/${header}" "${toolchain_staging}/usr/include/"
             done
 
+            (
+              cd lua-5.1.5/src
+              "${cc}" -DLUA_USE_LINUX -std=gnu99 -fPIC -O2 -shared \
+                -Wl,-soname,liblua.so.5.1 \
+                -o liblua.so.5.1.5 \
+                lapi.c lauxlib.c lbaselib.c lcode.c ldblib.c ldebug.c ldo.c \
+                ldump.c lfunc.c lgc.c linit.c liolib.c llex.c lmathlib.c \
+                lmem.c loadlib.c lobject.c lopcodes.c loslib.c lparser.c \
+                lstate.c lstring.c lstrlib.c ltable.c ltablib.c ltm.c \
+                lundump.c lvm.c lzio.c -lm
+            )
+
+            cp -fp "lua-5.1.5/src/liblua.so.5.1.5" "${target_staging}/usr/lib/"
+            ln -sf liblua.so.5.1.5 "${target_staging}/usr/lib/liblua.so.5.1"
+            ln -sf liblua.so.5.1.5 "${target_staging}/usr/lib/liblua.so"
+            ln -sf liblua.so.5.1.5 "${target_staging}/usr/lib/liblualib.so"
+
+            cp -fp "lua-5.1.5/src/liblua.so.5.1.5" "${toolchain_staging}/usr/lib/"
+            ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblua.so.5.1"
+            ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblua.so"
+            ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblualib.so"
+
             find staging_dir -maxdepth 5 -type f -name 'lua.h' -print
+            find staging_dir -maxdepth 5 -type f -name 'liblua.so*' -print
           }
 
           stage_libnl_tiny() {
