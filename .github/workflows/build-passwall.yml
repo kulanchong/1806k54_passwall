@@ -220,7 +220,8 @@ jobs:
 
           # SDK builds need development headers staged before LuCI C modules build.
           for target in \
-            package/feeds/packages/lua/compile \
+            package/utils/lua/compile \
+            package/libs/libnl-tiny/compile \
             package/feeds/luci/luci-lib-ip/compile \
             package/feeds/luci/luci-lib-jsonc/compile \
             package/feeds/luci/luci-compat/compile
