@@ -160,6 +160,7 @@ jobs:
         run: |
           set -euo pipefail
           PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
+          BASE_PACKAGES="liblua lua libnl-tiny luci-base luci-compat luci-lib-ip luci-lib-jsonc luci-lib-ipkg coreutils coreutils-base64 coreutils-nohup curl chinadns-ng dns2socks dnsmasq-full ip-full libuci-lua microsocks resolveip tcping"
 
           {
             printf 'CONFIG_ALL_KMODS=n\n'
@@ -190,7 +191,7 @@ jobs:
             printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin is not set\n'
           } > .config
 
-          for pkg in ${PASSWALL_PACKAGES}; do
+          for pkg in ${BASE_PACKAGES} ${PASSWALL_PACKAGES}; do
             if [[ ! "${pkg}" =~ ^[A-Za-z0-9_+-]+$ ]]; then
               echo "::error::软件包名 ${pkg} 含有非法字符。"
               exit 1
@@ -228,6 +229,13 @@ jobs:
           do
             if [[ -f "${target%/compile}/Makefile" ]]; then
               build_target "${target}"
+              if [[ "${target}" == "package/utils/lua/compile" ]]; then
+                if ! find staging_dir -path '*/usr/include/lua.h' -type f | grep -q .; then
+                  echo "::error::Lua 已编译但 staging_dir 中仍没有 lua.h，请检查 package/utils/lua/compile 的完整日志。"
+                  find staging_dir -maxdepth 5 -type f -name 'lua.h' -print || true
+                  exit 1
+                fi
+              fi
             else
               echo "::warning::跳过 ${target}，没有找到对应 Makefile。"
             fi
