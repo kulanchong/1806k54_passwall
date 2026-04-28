@@ -19,8 +19,7 @@ aarch64_cortex-a53
 
 - 自动下载并解压 `sunxi/cortexa53` SDK
 - 自动添加 `Openwrt-Passwall/openwrt-passwall` 和 `openwrt-passwall-packages` feed
-- 自动执行 `feeds update/install`
-- 自动编译选中的 PassWall 软件包
+- 自动打包选中的 PassWall LuCI 软件包
 - 自动上传 SDK 产出的 `ipk` 构件
 
 ## 配置
@@ -39,6 +38,8 @@ PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn"
 ```bash
 PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn"
 ```
+
+默认产物只包含 PassWall LuCI 插件本体；运行依赖由目标固件的 `opkg` 软件源提供。
 
 你可以按需增加，比如：
 

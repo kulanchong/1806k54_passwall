@@ -21,8 +21,6 @@ on:
 
 env:
   DEFAULT_SDK_URL: https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz
-  PACKAGES_FEED: https://github.com/immortalwrt/packages.git
-  PACKAGES_FEED_BRANCH: openwrt-18.06
   LUCI_FEED: https://github.com/immortalwrt/luci.git
   LUCI_FEED_BRANCH: openwrt-18.06
   PASSWALL_PACKAGES_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git
@@ -131,21 +129,23 @@ jobs:
           PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
 
           touch feeds.conf.default
-          if ! grep -qE '^src-git(-full)?[[:space:]]+packages[[:space:]]' feeds.conf.default; then
-            printf 'src-git packages %s;%s\n' "${PACKAGES_FEED}" "${PACKAGES_FEED_BRANCH}" >> feeds.conf.default
-          fi
           if ! grep -qE '^src-git(-full)?[[:space:]]+luci[[:space:]]' feeds.conf.default; then
             printf 'src-git luci %s;%s\n' "${LUCI_FEED}" "${LUCI_FEED_BRANCH}" >> feeds.conf.default
           fi
           perl -0pi -e 's#\A#src-git passwall_packages '"${PASSWALL_PACKAGES_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\nsrc-git passwall_luci '"${PASSWALL_LUCI_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\n#' feeds.conf.default
-          ./scripts/feeds update packages luci passwall_packages passwall_luci
+          ./scripts/feeds update luci passwall_packages passwall_luci
 
-          base_packages="luci-base luci-compat luci-lib-jsonc luci-lib-ipkg coreutils coreutils-base64 coreutils-nohup curl chinadns-ng dns2socks dnsmasq-full ip-full libuci-lua lua microsocks resolveip tcping"
-          for pkg in ${base_packages} ${PASSWALL_PACKAGES}; do
+          for pkg in ${PASSWALL_PACKAGES}; do
             ./scripts/feeds install "${pkg}" || echo "::warning::feeds install ${pkg} 未找到或已由 SDK 内置，继续。"
           done
 
           ./scripts/feeds install luci-app-passwall
+
+          # Build only the PassWall LuCI package. Runtime dependencies are expected
+          # to come from the target firmware package feeds, not from this SDK job.
+          if [[ -f feeds/passwall_luci/luci-app-passwall/Makefile ]]; then
+            perl -0pi -e 's/LUCI_DEPENDS:=.*?\+tcping\n/LUCI_DEPENDS:=\n/s' feeds/passwall_luci/luci-app-passwall/Makefile
+          fi
 
       - name: Patch package source mirrors
         working-directory: ${{ steps.sdk.outputs.sdk_dir }}
@@ -160,14 +160,12 @@ jobs:
         run: |
           set -euo pipefail
           PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
-          BASE_PACKAGES="liblua lua libnl-tiny luci-base luci-compat luci-lib-ip luci-lib-jsonc luci-lib-ipkg coreutils coreutils-base64 coreutils-nohup curl chinadns-ng dns2socks dnsmasq-full ip-full libuci-lua microsocks resolveip tcping"
 
           {
             printf 'CONFIG_ALL_KMODS=n\n'
             printf 'CONFIG_ALL_NONSHARED=n\n'
             printf 'CONFIG_DEVEL=n\n'
             printf 'CONFIG_AUTOREMOVE=y\n'
-            printf 'CONFIG_PACKAGE_luci-compat=y\n'
             printf '# CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy is not set\n'
             printf '# CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy is not set\n'
             printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Geoview is not set\n'
@@ -191,7 +189,7 @@ jobs:
             printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin is not set\n'
           } > .config
 
-          for pkg in ${BASE_PACKAGES} ${PASSWALL_PACKAGES}; do
+          for pkg in ${PASSWALL_PACKAGES}; do
             if [[ ! "${pkg}" =~ ^[A-Za-z0-9_+-]+$ ]]; then
               echo "::error::软件包名 ${pkg} 含有非法字符。"
               exit 1
@@ -218,150 +216,6 @@ jobs:
               make "${target}" -j1 V=sc
             fi
           }
-
-          stage_lua_headers() {
-            local target_staging
-            local toolchain_staging
-            local cc
-            target_staging="$(find staging_dir -maxdepth 1 -type d -name 'target-*' | sort | head -n 1)"
-            toolchain_staging="$(find staging_dir -maxdepth 1 -type d -name 'toolchain-*' | sort | head -n 1)"
-
-            if [[ -z "${target_staging}" || -z "${toolchain_staging}" ]]; then
-              echo "::error::没有找到 target staging 或 toolchain staging 目录。"
-              exit 1
-            fi
-
-            if find "${target_staging}" -path '*/usr/include/lua.h' -type f | grep -q . \
-              && find "${target_staging}" -path '*/usr/lib/liblua.so*' -type f | grep -q .; then
-              return 0
-            fi
-
-            cc="$(find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*-gcc' | sort | head -n 1)"
-            if [[ -z "${cc}" ]]; then
-              cc="$(find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*-gcc-*' | sort | head -n 1)"
-            fi
-            if [[ -z "${cc}" ]]; then
-              echo "::error::没有找到 SDK 交叉编译 gcc，无法构建 liblua。"
-              find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*gcc*' -print || true
-              exit 1
-            fi
-            cc="$(readlink -f "${cc}")"
-
-            echo "Staging Lua 5.1 headers and liblua for SDK LuCI builds"
-            mkdir -p "${target_staging}/usr/include" "${target_staging}/usr/lib" "${target_staging}/pkginfo"
-            mkdir -p "${toolchain_staging}/usr/include" "${toolchain_staging}/usr/lib"
-
-            curl -fL --retry 5 --connect-timeout 30 -o lua-5.1.5.tar.gz \
-              https://sources.cdn.openwrt.org/lua-5.1.5.tar.gz
-            tar -xzf lua-5.1.5.tar.gz
-
-            for header in lua.h luaconf.h lauxlib.h lualib.h; do
-              cp "lua-5.1.5/src/${header}" "${target_staging}/usr/include/"
-              cp "lua-5.1.5/src/${header}" "${toolchain_staging}/usr/include/"
-            done
-
-            (
-              cd lua-5.1.5/src
-              "${cc}" -DLUA_USE_LINUX -std=gnu99 -fPIC -O2 -shared \
-                -Wl,-soname,liblua.so.5.1 \
-                -o liblua.so.5.1.5 \
-                lapi.c lauxlib.c lbaselib.c lcode.c ldblib.c ldebug.c ldo.c \
-                ldump.c lfunc.c lgc.c linit.c liolib.c llex.c lmathlib.c \
-                lmem.c loadlib.c lobject.c lopcodes.c loslib.c lparser.c \
-                lstate.c lstring.c lstrlib.c ltable.c ltablib.c ltm.c \
-                lundump.c lvm.c lzio.c -lm
-            )
-
-            cp -fp "lua-5.1.5/src/liblua.so.5.1.5" "${target_staging}/usr/lib/"
-            ln -sf liblua.so.5.1.5 "${target_staging}/usr/lib/liblua.so.5.1"
-            ln -sf liblua.so.5.1.5 "${target_staging}/usr/lib/liblua.so"
-            ln -sf liblua.so.5.1.5 "${target_staging}/usr/lib/liblualib.so"
-
-            cp -fp "lua-5.1.5/src/liblua.so.5.1.5" "${toolchain_staging}/usr/lib/"
-            ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblua.so.5.1"
-            ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblua.so"
-            ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblualib.so"
-
-            {
-              printf 'liblua.so.5.1\n'
-              printf 'liblua.so\n'
-              printf 'liblualib.so\n'
-            } > "${target_staging}/pkginfo/liblua.provides"
-
-            find staging_dir -maxdepth 5 -type f -name 'lua.h' -print
-            find staging_dir -maxdepth 5 -type f -name 'liblua.so*' -print
-          }
-
-          stage_libnl_tiny() {
-            local target_staging
-            local toolchain_staging
-            local cc
-            target_staging="$(find staging_dir -maxdepth 1 -type d -name 'target-*' | sort | head -n 1)"
-            toolchain_staging="$(find staging_dir -maxdepth 1 -type d -name 'toolchain-*' | sort | head -n 1)"
-
-            if [[ -z "${target_staging}" || -z "${toolchain_staging}" ]]; then
-              echo "::error::没有找到 target staging 或 toolchain staging 目录。"
-              exit 1
-            fi
-
-            if find "${target_staging}" -path '*/usr/include/libnl-tiny/netlink/msg.h' -type f | grep -q . \
-              && find "${target_staging}" -path '*/usr/lib/libnl-tiny.so*' -type f | grep -q .; then
-              return 0
-            fi
-
-            echo "Toolchain staging: ${toolchain_staging}"
-            find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*gcc*' -print || true
-
-            cc="$(find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*-gcc' | sort | head -n 1)"
-            if [[ -z "${cc}" ]]; then
-              cc="$(find "${toolchain_staging}" -maxdepth 4 \( -type f -o -type l \) -name '*-gcc-*' | sort | head -n 1)"
-            fi
-            if [[ -z "${cc}" ]]; then
-              echo "::error::没有找到 SDK 交叉编译 gcc。"
-              exit 1
-            fi
-            cc="$(readlink -f "${cc}")"
-            echo "Using SDK compiler: ${cc}"
-
-            echo "Staging libnl-tiny for SDK LuCI builds"
-            rm -rf libnl-tiny-src libnl-tiny-build libnl-tiny-dest
-            git clone https://github.com/openwrt/libnl-tiny.git libnl-tiny-src
-            git -C libnl-tiny-src checkout c291088f631d1694f7ba0444b59677b194348da8
-
-            cmake -S libnl-tiny-src -B libnl-tiny-build \
-              -DCMAKE_C_COMPILER="${cc}" \
-              -DCMAKE_INSTALL_PREFIX=/usr \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_INSTALL_INCLUDEDIR=include
-            cmake --build libnl-tiny-build --parallel "$(nproc)"
-            DESTDIR="$(pwd)/libnl-tiny-dest" cmake --install libnl-tiny-build
-
-            mkdir -p "${target_staging}/usr/include/libnl-tiny" "${target_staging}/usr/lib" "${target_staging}/pkginfo"
-            cp -fpR libnl-tiny-dest/usr/include/libnl-tiny/* "${target_staging}/usr/include/libnl-tiny/"
-            cp -fpP libnl-tiny-dest/usr/lib/libnl-tiny.so* "${target_staging}/usr/lib/"
-            printf 'libnl-tiny.so\n' > "${target_staging}/pkginfo/libnl-tiny.provides"
-
-            find "${target_staging}/usr/include/libnl-tiny" -type f -name 'msg.h' -print
-            find "${target_staging}/usr/lib" -maxdepth 1 -type f -name 'libnl-tiny.so*' -print
-          }
-
-          stage_lua_headers
-          stage_libnl_tiny
-
-          # SDK builds need development headers staged before LuCI C modules build.
-          for target in \
-            package/utils/lua/compile \
-            package/libs/libnl-tiny/compile \
-            package/feeds/luci/luci-lib-ip/compile \
-            package/feeds/luci/luci-lib-jsonc/compile \
-            package/feeds/luci/luci-compat/compile
-          do
-            if [[ -f "${target%/compile}/Makefile" ]]; then
-              build_target "${target}"
-            else
-              echo "::warning::跳过 ${target}，没有找到对应 Makefile。"
-            fi
-          done
 
           built_any=0
           for pkg in ${PASSWALL_PACKAGES}; do
