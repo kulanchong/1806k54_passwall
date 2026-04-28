@@ -29,7 +29,7 @@ aarch64_cortex-a53
 
 ```bash
 SDK_URL="https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
-PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core"
+PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn"
 ```
 
 ## 默认编译的包
@@ -37,13 +37,13 @@ PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core"
 默认包列表在 `build/passwall.env` 里：
 
 ```bash
-PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core"
+PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn"
 ```
 
 你可以按需增加，比如：
 
 ```bash
-PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core sing-box hysteria2"
+PASSWALL_PACKAGES="luci-app-passwall luci-i18n-passwall-zh-cn xray-core"
 ```
 
 ## 触发方式

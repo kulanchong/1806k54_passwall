@@ -10,7 +10,7 @@ on:
       passwall_packages:
         description: "Space-separated package list"
         required: false
-        default: "luci-app-passwall luci-i18n-passwall-zh-cn xray-core"
+        default: "luci-app-passwall luci-i18n-passwall-zh-cn"
 
   push:
     branches:
@@ -21,6 +21,8 @@ on:
 
 env:
   DEFAULT_SDK_URL: https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+  PACKAGES_FEED: https://github.com/immortalwrt/packages.git
+  PACKAGES_FEED_BRANCH: openwrt-18.06
   LUCI_FEED: https://github.com/immortalwrt/luci.git
   LUCI_FEED_BRANCH: openwrt-18.06
   PASSWALL_PACKAGES_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git
@@ -76,7 +78,7 @@ jobs:
           PASSWALL_PACKAGES_INPUT="${{ github.event.inputs.passwall_packages || '' }}"
 
           SDK_URL_INPUT="${SDK_URL_INPUT:-${SDK_URL:-${DEFAULT_SDK_URL}}}"
-          PASSWALL_PACKAGES_INPUT="${PASSWALL_PACKAGES_INPUT:-${PASSWALL_PACKAGES:-luci-app-passwall luci-i18n-passwall-zh-cn xray-core}}"
+          PASSWALL_PACKAGES_INPUT="${PASSWALL_PACKAGES_INPUT:-${PASSWALL_PACKAGES:-luci-app-passwall luci-i18n-passwall-zh-cn}}"
 
           if [[ -z "${SDK_URL_INPUT}" ]]; then
             echo "::error::SDK_URL 不能为空。"
@@ -123,16 +125,27 @@ jobs:
 
       - name: Add PassWall feeds
         working-directory: ${{ steps.sdk.outputs.sdk_dir }}
+        shell: bash
         run: |
+          set -euo pipefail
+          PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
+
           touch feeds.conf.default
+          if ! grep -qE '^src-git(-full)?[[:space:]]+packages[[:space:]]' feeds.conf.default; then
+            printf 'src-git packages %s;%s\n' "${PACKAGES_FEED}" "${PACKAGES_FEED_BRANCH}" >> feeds.conf.default
+          fi
           if ! grep -qE '^src-git(-full)?[[:space:]]+luci[[:space:]]' feeds.conf.default; then
             printf 'src-git luci %s;%s\n' "${LUCI_FEED}" "${LUCI_FEED_BRANCH}" >> feeds.conf.default
           fi
           perl -0pi -e 's#\A#src-git passwall_packages '"${PASSWALL_PACKAGES_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\nsrc-git passwall_luci '"${PASSWALL_LUCI_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\n#' feeds.conf.default
-          ./scripts/feeds update luci passwall_packages passwall_luci
-          ./scripts/feeds install -a -p luci
-          ./scripts/feeds install -a -p passwall_packages
-          ./scripts/feeds install -a -p passwall_luci
+          ./scripts/feeds update packages luci passwall_packages passwall_luci
+
+          base_packages="luci-base luci-compat luci-lib-jsonc luci-lib-ipkg coreutils coreutils-base64 coreutils-nohup curl chinadns-ng dns2socks dnsmasq-full ip-full libuci-lua lua microsocks resolveip tcping"
+          for pkg in ${base_packages} ${PASSWALL_PACKAGES}; do
+            ./scripts/feeds install "${pkg}" || echo "::warning::feeds install ${pkg} 未找到或已由 SDK 内置，继续。"
+          done
+
+          ./scripts/feeds install luci-app-passwall
 
       - name: Patch package source mirrors
         working-directory: ${{ steps.sdk.outputs.sdk_dir }}
@@ -154,6 +167,27 @@ jobs:
             printf 'CONFIG_DEVEL=n\n'
             printf 'CONFIG_AUTOREMOVE=y\n'
             printf 'CONFIG_PACKAGE_luci-compat=y\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Geoview is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Libev_Client is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Libev_Server is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Server is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadow_TLS is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_tuic_client is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray is not set\n'
+            printf '# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin is not set\n'
           } > .config
 
           for pkg in ${PASSWALL_PACKAGES}; do
