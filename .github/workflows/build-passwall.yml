@@ -213,8 +213,35 @@ jobs:
 
       - name: Build PassWall packages
         working-directory: immortalwrt
+        shell: bash
         run: |
-          make package/compile -j"$(nproc)" V=s
+          set -euo pipefail
+          PASSWALL_PACKAGES='${{ steps.cfg.outputs.passwall_packages }}'
+
+          built_any=0
+          for pkg in ${PASSWALL_PACKAGES}; do
+            mapfile -t makefiles < <(find package -path "*/${pkg}/Makefile" -type f | sort)
+
+            if [[ "${#makefiles[@]}" -eq 0 ]]; then
+              echo "::warning::没有找到 ${pkg} 的独立 Makefile，可能是由其它 LuCI 包生成的翻译包，跳过直接编译。"
+              continue
+            fi
+
+            for makefile in "${makefiles[@]}"; do
+              target="${makefile%/Makefile}/compile"
+              echo "Building ${pkg} via ${target}"
+              if ! make "${target}" -j"$(nproc)" V=s; then
+                echo "::warning::${target} 并行编译失败，改用串行详细日志重试。"
+                make "${target}" -j1 V=sc
+              fi
+              built_any=1
+            done
+          done
+
+          if [[ "${built_any}" -eq 0 ]]; then
+            echo "::warning::没有找到可直接编译的 PassWall 包路径，回退到完整 package/compile。"
+            make package/compile -j"$(nproc)" V=s || make package/compile -j1 V=sc
+          fi
 
       - name: Collect artifacts
         shell: bash
