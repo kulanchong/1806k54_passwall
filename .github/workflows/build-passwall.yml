@@ -1,0 +1,186 @@
+name: Build PassWall for ImmortalWrt 18.06-k5.4
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_board:
+        description: "OpenWrt target board, for example bcm27xx"
+        required: false
+        default: ""
+      target_subtarget:
+        description: "OpenWrt target subtarget, for example bcm2710"
+        required: false
+        default: ""
+      target_profile:
+        description: "Optional device profile, for example DEVICE_RaspberryPi_3B"
+        required: false
+        default: ""
+      passwall_packages:
+        description: "Space-separated package list"
+        required: false
+        default: "luci-app-passwall luci-i18n-passwall-zh-cn xray-core"
+
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-passwall.yml"
+      - "build/passwall.env"
+
+env:
+  SOURCE_REPO: https://github.com/immortalwrt/immortalwrt.git
+  SOURCE_BRANCH: openwrt-18.06-k5.4
+  PASSWALL_PACKAGES_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git
+  PASSWALL_LUCI_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall.git
+  PASSWALL_FEED_BRANCH: main
+  ARCH_PACKAGES: aarch64_cortex-a53
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          large-packages: false
+          docker-images: true
+          tool-cache: true
+          swap-storage: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+            libmpfr-dev libncurses5-dev libncursesw5 libncursesw5-dev libreadline-dev \
+            libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch \
+            pkgconf python2.7 python3 python3-pip python3-ply python3-docutils qemu-utils \
+            re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
+            vim wget xmlto xxd zlib1g-dev
+
+      - name: Load build config
+        id: cfg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f build/passwall.env ]]; then
+            set -a
+            source build/passwall.env
+            set +a
+          fi
+
+          TARGET_BOARD="${{ github.event.inputs.target_board || '' }}"
+          TARGET_SUBTARGET="${{ github.event.inputs.target_subtarget || '' }}"
+          TARGET_PROFILE="${{ github.event.inputs.target_profile || '' }}"
+          PASSWALL_PACKAGES_INPUT="${{ github.event.inputs.passwall_packages || '' }}"
+
+          TARGET_BOARD="${TARGET_BOARD:-${TARGET_BOARD_DEFAULT:-}}"
+          TARGET_SUBTARGET="${TARGET_SUBTARGET:-${TARGET_SUBTARGET_DEFAULT:-}}"
+          TARGET_PROFILE="${TARGET_PROFILE:-${TARGET_PROFILE_DEFAULT:-}}"
+          PASSWALL_PACKAGES_INPUT="${PASSWALL_PACKAGES_INPUT:-${PASSWALL_PACKAGES:-luci-app-passwall luci-i18n-passwall-zh-cn xray-core}}"
+
+          if [[ -z "${TARGET_BOARD}" || -z "${TARGET_SUBTARGET}" ]]; then
+            echo "::error::TARGET_BOARD/TARGET_SUBTARGET 不能为空。aarch64_cortex-a53 只是软件包架构，不能唯一确定 OpenWrt 目标平台。请在 build/passwall.env 中填写，或手动运行 workflow_dispatch 时传入。"
+            exit 1
+          fi
+
+          echo "target_board=${TARGET_BOARD}" >> "${GITHUB_OUTPUT}"
+          echo "target_subtarget=${TARGET_SUBTARGET}" >> "${GITHUB_OUTPUT}"
+          echo "target_profile=${TARGET_PROFILE}" >> "${GITHUB_OUTPUT}"
+          echo "passwall_packages=${PASSWALL_PACKAGES_INPUT}" >> "${GITHUB_OUTPUT}"
+
+      - name: Clone ImmortalWrt source
+        run: |
+          git clone --depth 1 --branch "${SOURCE_BRANCH}" "${SOURCE_REPO}" immortalwrt
+
+      - name: Add PassWall feeds
+        working-directory: immortalwrt
+        run: |
+          perl -0pi -e 's#\A#src-git passwall_packages '"${PASSWALL_PACKAGES_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\nsrc-git passwall_luci '"${PASSWALL_LUCI_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\n#' feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Generate .config
+        working-directory: immortalwrt
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CONFIG_TARGET_${{ steps.cfg.outputs.target_board }}=y"
+            echo "CONFIG_TARGET_${{ steps.cfg.outputs.target_board }}_${{ steps.cfg.outputs.target_subtarget }}=y"
+            if [[ -n "${{ steps.cfg.outputs.target_profile }}" ]]; then
+              echo "CONFIG_TARGET_${{ steps.cfg.outputs.target_board }}_${{ steps.cfg.outputs.target_subtarget }}_${{ steps.cfg.outputs.target_profile }}=y"
+            fi
+            echo "CONFIG_ALL_KMODS=n"
+            echo "CONFIG_ALL_NONSHARED=n"
+            echo "CONFIG_DEVEL=n"
+            echo "CONFIG_AUTOREMOVE=y"
+            echo "CONFIG_PACKAGE_luci-compat=y"
+          } > .config
+
+          for pkg in ${{ steps.cfg.outputs.passwall_packages }}; do
+            echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+          done
+
+          make defconfig
+
+      - name: Download sources
+        working-directory: immortalwrt
+        run: |
+          make download -j"$(nproc)" V=s
+
+      - name: Build PassWall packages
+        working-directory: immortalwrt
+        run: |
+          make package/compile -j"$(nproc)" V=s
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          shopt -s nullglob
+
+          mapfile -t files < <(find immortalwrt/bin/packages -type f \( -name "*.ipk" -o -name "*.apk" \) | sort)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::error::没有找到任何已编译的软件包，请检查前面的日志。"
+            exit 1
+          fi
+
+          packages="${{ steps.cfg.outputs.passwall_packages }}"
+          for file in "${files[@]}"; do
+            name="$(basename "${file}")"
+            if [[ "${name}" == "Packages"* ]]; then
+              cp "${file}" upload/
+              continue
+            fi
+
+            for pkg in ${packages}; do
+              if [[ "${name}" == "${pkg}"_* && ( "${name}" == *"_${ARCH_PACKAGES}.ipk" || "${name}" == *"_${ARCH_PACKAGES}.apk" || "${name}" == *"_all.ipk" || "${name}" == *"_all.apk" ) ]]; then
+                cp "${file}" upload/
+                break
+              fi
+            done
+          done
+
+          if ! compgen -G "upload/*.ipk" > /dev/null && ! compgen -G "upload/*.apk" > /dev/null; then
+            echo "::error::没有收集到选中的 PassWall 软件包。请确认 TARGET_BOARD/TARGET_SUBTARGET 与 ${ARCH_PACKAGES} 匹配，且所选包在该分支上可编译。"
+            exit 1
+          fi
+
+          printf '%s\n' "${{ steps.cfg.outputs.passwall_packages }}" > upload/selected-packages.txt
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: passwall-${{ steps.cfg.outputs.target_board }}-${{ steps.cfg.outputs.target_subtarget }}-${{ env.ARCH_PACKAGES }}
+          path: upload/
+          if-no-files-found: error
