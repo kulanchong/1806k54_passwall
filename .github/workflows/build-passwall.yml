@@ -248,7 +248,7 @@ jobs:
             cc="$(readlink -f "${cc}")"
 
             echo "Staging Lua 5.1 headers and liblua for SDK LuCI builds"
-            mkdir -p "${target_staging}/usr/include" "${target_staging}/usr/lib"
+            mkdir -p "${target_staging}/usr/include" "${target_staging}/usr/lib" "${target_staging}/pkginfo"
             mkdir -p "${toolchain_staging}/usr/include" "${toolchain_staging}/usr/lib"
 
             curl -fL --retry 5 --connect-timeout 30 -o lua-5.1.5.tar.gz \
@@ -281,6 +281,12 @@ jobs:
             ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblua.so.5.1"
             ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblua.so"
             ln -sf liblua.so.5.1.5 "${toolchain_staging}/usr/lib/liblualib.so"
+
+            {
+              printf 'liblua.so.5.1\n'
+              printf 'liblua.so\n'
+              printf 'liblualib.so\n'
+            } > "${target_staging}/pkginfo/liblua.provides"
 
             find staging_dir -maxdepth 5 -type f -name 'lua.h' -print
             find staging_dir -maxdepth 5 -type f -name 'liblua.so*' -print
@@ -330,9 +336,10 @@ jobs:
             cmake --build libnl-tiny-build --parallel "$(nproc)"
             DESTDIR="$(pwd)/libnl-tiny-dest" cmake --install libnl-tiny-build
 
-            mkdir -p "${target_staging}/usr/include/libnl-tiny" "${target_staging}/usr/lib"
+            mkdir -p "${target_staging}/usr/include/libnl-tiny" "${target_staging}/usr/lib" "${target_staging}/pkginfo"
             cp -fpR libnl-tiny-dest/usr/include/libnl-tiny/* "${target_staging}/usr/include/libnl-tiny/"
             cp -fpP libnl-tiny-dest/usr/lib/libnl-tiny.so* "${target_staging}/usr/lib/"
+            printf 'libnl-tiny.so\n' > "${target_staging}/pkginfo/libnl-tiny.provides"
 
             find "${target_staging}/usr/include/libnl-tiny" -type f -name 'msg.h' -print
             find "${target_staging}/usr/lib" -maxdepth 1 -type f -name 'libnl-tiny.so*' -print
