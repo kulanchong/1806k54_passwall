@@ -219,6 +219,43 @@ jobs:
             fi
           }
 
+          stage_lua_headers() {
+            local target_staging
+            local toolchain_staging
+            target_staging="$(find staging_dir -maxdepth 1 -type d -name 'target-*' | sort | head -n 1)"
+            toolchain_staging="$(find staging_dir -maxdepth 1 -type d -name 'toolchain-*' | sort | head -n 1)"
+
+            if [[ -z "${target_staging}" ]]; then
+              echo "::error::没有找到 target staging 目录。"
+              exit 1
+            fi
+
+            if find "${target_staging}" -path '*/usr/include/lua.h' -type f | grep -q .; then
+              return 0
+            fi
+
+            echo "Staging Lua 5.1 headers for SDK LuCI builds"
+            mkdir -p "${target_staging}/usr/include"
+            if [[ -n "${toolchain_staging}" ]]; then
+              mkdir -p "${toolchain_staging}/usr/include"
+            fi
+
+            curl -fL --retry 5 --connect-timeout 30 -o lua-5.1.5.tar.gz \
+              https://sources.cdn.openwrt.org/lua-5.1.5.tar.gz
+            tar -xzf lua-5.1.5.tar.gz
+
+            for header in lua.h luaconf.h lauxlib.h lualib.h; do
+              cp "lua-5.1.5/src/${header}" "${target_staging}/usr/include/"
+              if [[ -n "${toolchain_staging}" ]]; then
+                cp "lua-5.1.5/src/${header}" "${toolchain_staging}/usr/include/"
+              fi
+            done
+
+            find staging_dir -maxdepth 5 -type f -name 'lua.h' -print
+          }
+
+          stage_lua_headers
+
           # SDK builds need development headers staged before LuCI C modules build.
           for target in \
             package/utils/lua/compile \
@@ -229,13 +266,6 @@ jobs:
           do
             if [[ -f "${target%/compile}/Makefile" ]]; then
               build_target "${target}"
-              if [[ "${target}" == "package/utils/lua/compile" ]]; then
-                if ! find staging_dir -path '*/usr/include/lua.h' -type f | grep -q .; then
-                  echo "::error::Lua 已编译但 staging_dir 中仍没有 lua.h，请检查 package/utils/lua/compile 的完整日志。"
-                  find staging_dir -maxdepth 5 -type f -name 'lua.h' -print || true
-                  exit 1
-                fi
-              fi
             else
               echo "::warning::跳过 ${target}，没有找到对应 Makefile。"
             fi
