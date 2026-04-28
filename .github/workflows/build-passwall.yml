@@ -271,11 +271,19 @@ jobs:
               return 0
             fi
 
-            cc="$(find "${toolchain_bin}" -maxdepth 1 -type f -name '*-gcc' | sort | head -n 1)"
+            echo "Toolchain bin: ${toolchain_bin}"
+            find "${toolchain_bin}" -maxdepth 1 \( -type f -o -type l \) -name '*gcc*' -print || true
+
+            cc="$(find "${toolchain_bin}" -maxdepth 1 \( -type f -o -type l \) -name '*-gcc' | sort | head -n 1)"
+            if [[ -z "${cc}" ]]; then
+              cc="$(find "${toolchain_bin}" -maxdepth 1 \( -type f -o -type l \) -name '*-gcc-*' | sort | head -n 1)"
+            fi
             if [[ -z "${cc}" ]]; then
               echo "::error::没有找到 SDK 交叉编译 gcc。"
               exit 1
             fi
+            cc="$(readlink -f "${cc}")"
+            echo "Using SDK compiler: ${cc}"
 
             echo "Staging libnl-tiny for SDK LuCI builds"
             rm -rf libnl-tiny-src libnl-tiny-build libnl-tiny-dest
