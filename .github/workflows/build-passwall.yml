@@ -121,6 +121,13 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Patch package source mirrors
+        working-directory: immortalwrt
+        run: |
+          if [[ -f feeds/packages/net/curl/Makefile ]]; then
+            perl -0pi -e 's#PKG_SOURCE_URL:=https://dl\.uxnr\.de/mirror/curl/ \\\n https://curl\.askapache\.com/download/ \\\n https://curl\.se/download/#PKG_SOURCE_URL:=https://sources.cdn.openwrt.org/ \\\n https://curl.se/download/#g' feeds/packages/net/curl/Makefile
+          fi
+
       - name: Generate .config
         working-directory: immortalwrt
         shell: bash
