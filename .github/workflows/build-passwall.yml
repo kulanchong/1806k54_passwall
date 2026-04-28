@@ -21,6 +21,8 @@ on:
 
 env:
   DEFAULT_SDK_URL: https://downloads.immortalwrt.org/releases/18.06-k5.4-SNAPSHOT/targets/sunxi/cortexa53/immortalwrt-sdk-18.06-k5.4-SNAPSHOT-sunxi-cortexa53_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+  LUCI_FEED: https://github.com/immortalwrt/luci.git
+  LUCI_FEED_BRANCH: openwrt-18.06
   PASSWALL_PACKAGES_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git
   PASSWALL_LUCI_FEED: https://github.com/Openwrt-Passwall/openwrt-passwall.git
   PASSWALL_FEED_BRANCH: main
@@ -123,8 +125,12 @@ jobs:
         working-directory: ${{ steps.sdk.outputs.sdk_dir }}
         run: |
           touch feeds.conf.default
+          if ! grep -qE '^src-git(-full)?[[:space:]]+luci[[:space:]]' feeds.conf.default; then
+            printf 'src-git luci %s;%s\n' "${LUCI_FEED}" "${LUCI_FEED_BRANCH}" >> feeds.conf.default
+          fi
           perl -0pi -e 's#\A#src-git passwall_packages '"${PASSWALL_PACKAGES_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\nsrc-git passwall_luci '"${PASSWALL_LUCI_FEED}"';'"${PASSWALL_FEED_BRANCH}"'\n#' feeds.conf.default
-          ./scripts/feeds update passwall_packages passwall_luci
+          ./scripts/feeds update luci passwall_packages passwall_luci
+          ./scripts/feeds install -a -p luci
           ./scripts/feeds install -a -p passwall_packages
           ./scripts/feeds install -a -p passwall_luci
 
